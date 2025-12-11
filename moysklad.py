@@ -1,37 +1,50 @@
+import requests
 import pyperclip
-from wb import get_wb_products, process_wb_products
-from moysklad import get_products
+import os
+import base64
+from dotenv import load_dotenv
+from wb import get_wb_vendor_codes, get_wb_products
 
-#
-def get_products_from_wildberries_and_moysklad():
-    result = []
+load_dotenv()
+MOYSKLAD_API_LOGIN = os.getenv('MOYSKLAD_API_LOGIN')
+MOYSKLAD_API_PASSWORD = os.getenv('MOYSKLAD_API_PASSWORD')
+MOYSKLAD_FILTER_PATH_NAME = os.getenv('MOYSKLAD_FILTER_PATH_NAME')
+
+# Функция для возвращения шапки с авторизацией
+def get_headers():
+    # Кодируем логин и пароль в Base64
+    encoded_login_password = base64.b64encode(f'{MOYSKLAD_API_LOGIN}:{MOYSKLAD_API_PASSWORD}'.encode()).decode()
+    headers = {
+        'Authorization': f'Basic {encoded_login_password}'
+    }
+    return headers
+
+# Функция получения списка товаров
+def get_products():
+    products = []
+
     wb_products = get_wb_products(435)
-    wb_products = process_wb_products(wb_products)
-    moysklad_products = get_products()
+    wb_vendor_codes = get_wb_vendor_codes(wb_products)
 
-    for wb_product in wb_products:
-        for moysklad_product in moysklad_products:
-            if wb_product['wb_supplier_article'] == moysklad_product['ms_article']:
-                result.append({
-                    'wb_nm_id': wb_product['wb_nm_id'],
-                    'wb_supplier_article': wb_product['wb_supplier_article'],
-                    'ms_id': moysklad_product['ms_id'],
-                    'ms_article': moysklad_product['ms_article'],
-                    'wb_name': wb_product['wb_name'],
-                    'wb_barcodes': wb_product['wb_barcodes'],
-                    'ms_barcodes': moysklad_product['ms_barcodes'],
-                })
+    for vendor_code in wb_vendor_codes:
+        url = f'https://api.moysklad.ru/api/remap/1.2/entity/product?filter=article={vendor_code}&filter=pathName=Дом и красота/Тест'
+        response = requests.get(url, headers=get_headers())
+        if response.status_code == 200:
+            for row in response.json()['rows']:
+                for barcode in row['barcodes']:
+                    products.append({
+                        'ms_id': row['id'],
+                        'ms_article': row['article'],
+                        'ms_path_name': row['pathName'],
+                        'ms_name': row['name'],
+                        'ms_barcodes': barcode['code128'],
+                    })
+        else:
+            print(response.json())
 
-    return result
+    return products
 
-# Функция проверки совпадения баркодов
-def check_barcodes(product: dict) -> bool:
-    result = []
-    for product in products:
-        if product['wb_barcodes'] != product['ms_barcodes']:
-            result.append(product)
-    return result
-
+# Функция для форматирования данных в формат TSV (удобно для копирования)
 def format_for_copy_paste(data: list[dict]) -> str:
     """
     Форматирует данные в формат TSV (табуляция) для вставки в Google Sheets.
@@ -83,8 +96,7 @@ def print_for_copy_paste(data: list[dict]):
     print("Скопируйте данные выше (Ctrl+A, затем Ctrl+C) и вставьте в Google Sheets (Ctrl+V)")
 
 
-if __name__ == "__main__":
-    products = get_products_from_wildberries_and_moysklad()
-    result = check_barcodes(products)
-    print_for_copy_paste(result)
-    copy_to_clipboard(result)
+if __name__ == '__main__':
+    products = get_products()
+    print_for_copy_paste(products)
+    copy_to_clipboard(products)
